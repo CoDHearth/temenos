@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0d0d1a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Temenos" />
+  <meta name="description" content="A sacred tracker — fasting, body, sky, oracle, and the living calendar." />
+
+  <title>Temenos</title>
+
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" href="/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&display=swap" rel="stylesheet" />
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root {
+      height: 100%;
+      background: #0d0d1a;
+      color: #e8e0cc;
+      font-family: 'Cormorant Garamond', Georgia, serif;
+      overflow-x: hidden;
+    }
+    body { overscroll-behavior: none; }
+    /* Safe area for notched Android phones */
+    #root {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React via CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then(reg => {
+            console.log('Temenos SW registered:', reg.scope);
+            window.__swReg = reg;
+          })
+          .catch(err => console.warn('SW registration failed:', err));
+      });
+    }
+
+    // Helper to send messages to SW
+    window.swMessage = function(msg) {
+      if (navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage(msg);
+      }
+    };
+
+    // Request notification permission
+    window.requestNotifications = async function() {
+      if ('Notification' in window) {
+        const result = await Notification.requestPermission();
+        return result === 'granted';
+      }
+      return false;
+    };
+  </script>
+
+  <!-- App -->
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // ── CONSTANTS ──────────────────────────────────────────────────
+    const CARD_NAMES = ["The Fool","The Magician","The High Priestess","The Empress","The Emperor","The Hierophant","The Lovers","The Chariot","Strength","The Hermit","Wheel of Fortune","Justice","The Hanged Man","Death","Temperance","The Devil","The Tower","The Star","The Moon","The Sun","Judgement","The World"];
+    const CARD_KEYWORDS = ["beginnings, trust, leap","will, manifestation, skill","mystery, intuition, silence","abundance, fertility, earth","structure, authority, stability","tradition, teaching, initiation","union, choice, alignment","victory, discipline, direction","strength, compassion, patience","solitude, inner light, withdrawal","turning, fate, cycles","balance, truth, consequence","suspension, surrender, new perspective","transformation, endings, threshold","flow, alchemy, integration","shadow, bondage, material","sudden change, revelation, liberation","hope, renewal, guidance","illusion, depth, the unconscious","radiance, clarity, vitality","awakening, calling, rebirth","completion, wholeness, integration"];
+
+    const SACRED_CALENDAR = {
+      "01-01":[{id:"janus",name:"Kalends of Janus",tradition:"Roman",brief:"Sacred to Janus, god of thresholds and time; all beginnings pass through his double face."}],
+      "01-06":[{id:"epiphany",name:"Epiphany",tradition:"Christian mystical",brief:"The Magi arrive; divine made manifest; Theophany in the Eastern Church."}],
+      "01-17":[{id:"anthony-great",name:"Feast of Anthony the Great",tradition:"Christian mystical",brief:"Father of monasticism; withdrew to the desert until only God remained."}],
+      "01-28":[{id:"yeats-death",name:"Death of W.B. Yeats, 1939",tradition:"Mystical poetry",brief:"Irish visionary; architect of the Gyres; student of the Golden Dawn; poet of the anima mundi."}],
+      "01-29":[{id:"swedenborg-birth",name:"Birth of Emanuel Swedenborg, 1688",tradition:"Christian mysticism",brief:"Swedish scientist who at 56 began receiving visions of heaven and hell."}],
+      "02-01":[{id:"imbolc",name:"Imbolc",tradition:"Celtic",brief:"First fire of spring stirs in the earth's belly; sacred to Brigid of forge, healing, and poetry."},{id:"brigid-feast",name:"Feast of St. Brigid",tradition:"Christian mystical",brief:"The Celtic triple goddess Christianized; her eternal flame at Kildare burned for centuries."}],
+      "02-02":[{id:"candlemas",name:"Candlemas",tradition:"Christian mystical",brief:"All candles blessed; Mary's purification; last feast of the Christmas cycle and echo of Imbolc."}],
+      "02-03":[{id:"weil-birth",name:"Birth of Simone Weil, 1909",tradition:"Christian mysticism",brief:"Philosopher of affliction and attention; practiced decreation; found God in the texture of void."}],
+      "02-13":[{id:"parentalia",name:"Parentalia begins",tradition:"Roman",brief:"Nine days sacred to the ancestral dead; temples close, marriages forbidden; offerings left at family tombs."}],
+      "02-15":[{id:"lupercalia",name:"Lupercalia",tradition:"Roman",brief:"Archaic rite of purification and fertility; the Luperci priests run through the Palatine."}],
+      "02-24":[{id:"pico-birth",name:"Birth of Pico della Mirandola, 1463",tradition:"Renaissance Hermeticism",brief:"Synthesizer of Kabbalah, Neoplatonism, and Christian mysticism; author of the Oration on the Dignity of Man."}],
+      "03-01":[{id:"matronalia",name:"Matronalia",tradition:"Roman",brief:"Festival of Juno Lucina; women honored; the first day of the old Roman year."}],
+      "03-15":[{id:"canna-intrat",name:"Canna Intrat — Reed Enters",tradition:"Roman (Magna Mater)",brief:"The sacred reed carried into Cybele's sanctuary; the instrument of mourning for Attis consecrated."}],
+      "03-17":[{id:"liberalia",name:"Liberalia",tradition:"Roman",brief:"Festival of Liber Pater the liberating god; boys receive the toga virilis; old women sell honeycakes at crossroads."}],
+      "03-20":[{id:"spring-equinox",name:"Spring Equinox / Ostara",tradition:"Celtic / Norse / Universal",brief:"The axis tilts; light and dark hold equal measure before the world tips toward the sun."}],
+      "03-22":[{id:"arbor-intrat",name:"Arbor Intrat — Tree Enters",tradition:"Roman (Magna Mater)",brief:"The sacred pine of Attis carried into the sanctuary; wrapped in wool and violet garlands."}],
+      "03-24":[{id:"dies-sanguinis",name:"Dies Sanguinis",tradition:"Roman (Magna Mater)",brief:"Day of Blood; ecstatic mourning for Attis; the threshold between death and resurrection."}],
+      "03-25":[{id:"hilaria",name:"Hilaria",tradition:"Roman (Magna Mater)",brief:"Day of Joy; Attis rises; rejoicing follows mourning; masquerade and festivity fill the city."},{id:"annunciation",name:"Feast of the Annunciation",tradition:"Christian mystical",brief:"The angel speaks; Mary consents; the Word takes flesh on the spring equinox."},{id:"novalis-death",name:"Death of Novalis, 1801",tradition:"German Romanticism",brief:"Poet of the Night and the blue flower; his death at 28 was his transfiguration."}],
+      "03-26":[{id:"requietio",name:"Requietio",tradition:"Roman (Magna Mater)",brief:"Day of Rest; after ecstasy and grief, stillness. The rites pause before the final mystery."}],
+      "03-27":[{id:"lavatio",name:"Lavatio",tradition:"Roman (Magna Mater)",brief:"The sacred stone of the Goddess bathed in the Almo stream; purification before the circus games."}],
+      "03-28":[{id:"initium-caiani",name:"Initium Caiani",tradition:"Roman (Magna Mater)",brief:"The Circus Games begin at the Circus of Caius and Nero; the Great Mother's festival reaches its public culmination."},{id:"teresa-birth",name:"Birth of Teresa of Ávila, 1515",tradition:"Christian mysticism",brief:"Cartographer of the Interior Castle; reformer of Carmel; her mystical marriage was as real as any earthly union."}],
+      "03-29":[{id:"caiani-ii",name:"Ludi Caiani continue",tradition:"Roman (Magna Mater)",brief:"The Circus Games of Magna Mater continue; the city remains suspended in her festival."}],
+      "04-04":[{id:"megalesia",name:"Megalesia / Ludi Megalenses",tradition:"Roman (Magna Mater)",brief:"Seven days of games and theater for the Great Mother; Rome's most ancient sacred games, since 204 BCE."}],
+      "04-19":[{id:"parilia",name:"Parilia",tradition:"Roman",brief:"Festival of shepherds; purification by fire; the legendary founding of Rome."}],
+      "04-28":[{id:"floralia",name:"Floralia begins",tradition:"Roman",brief:"Six days for Flora; flowers scattered, hares released; the exuberant excess of spring fully opening."}],
+      "05-01":[{id:"beltane",name:"Beltane",tradition:"Celtic",brief:"Fire festival at spring's height; cattle driven between two fires; the green world fully opens."}],
+      "05-02":[{id:"novalis-birth",name:"Birth of Novalis, 1772",tradition:"German Romanticism",brief:"His grief for Sophie von Kühn became the engine of a visionary philosophy of night."}],
+      "05-08":[{id:"julian-revelations",name:"Julian of Norwich's Revelations, 1373",tradition:"Christian mysticism",brief:"Near death, Julian received her Showings of Divine Love. All shall be well."}],
+      "05-15":[{id:"dickinson-death",name:"Death of Emily Dickinson, 1886",tradition:"American mystical poetry",brief:"She used dashes as thresholds and made death a neighbor; poems found sewn in fascicles."}],
+      "06-07":[{id:"vestalia",name:"Vestalia begins",tradition:"Roman",brief:"Nine days sacred to Vesta; her inner sanctuary opened to women only; the sacred fire at Rome's center."}],
+      "06-13":[{id:"yeats-birth",name:"Birth of W.B. Yeats, 1865",tradition:"Mystical poetry",brief:"Born in Sandymount; would spend his life between Ireland and the invisible."}],
+      "06-21":[{id:"litha",name:"Midsummer / Litha",tradition:"Celtic / Norse / Universal",brief:"The sun at zenith; the world holds its breath; after today the slow turn toward darkness begins."}],
+      "06-24":[{id:"john-cross-birth",name:"Birth of John of the Cross, 1542",tradition:"Christian mysticism",brief:"Poet of the Dark Night; with Teresa of Ávila he reformed the Carmelites."}],
+      "07-07":[{id:"tanabata",name:"Tanabata",tradition:"Japanese",brief:"The Star Festival; Vega and Altair cross the Milky Way to meet; wishes hung from bamboo."}],
+      "07-13":[{id:"obon",name:"Obon begins",tradition:"Japanese Buddhist",brief:"Three days welcoming ancestors home; lanterns on rivers; the dead honored and released."}],
+      "07-25":[{id:"thomas-kempis-death",name:"Death of Thomas à Kempis, 1471",tradition:"Christian mysticism",brief:"Author of The Imitation of Christ; humility as the only path."}],
+      "08-01":[{id:"lughnasadh",name:"Lughnasadh",tradition:"Celtic",brief:"First harvest; Lugh consecrates the fruits of labor; the grief of fullness."}],
+      "08-12":[{id:"blake-death",name:"Death of William Blake, 1827",tradition:"English mystical poetry",brief:"He died singing; said he was going to a country he had longed to see all his life."}],
+      "08-15":[{id:"assumption",name:"Feast of the Assumption",tradition:"Christian mystical",brief:"Mary taken body and soul into heaven; the Dormition in Eastern tradition."}],
+      "08-24":[{id:"weil-death",name:"Death of Simone Weil, 1943",tradition:"Christian mysticism",brief:"She starved in solidarity with occupied France; died at 34; her affliction became her offering."}],
+      "08-28":[{id:"goethe-birth",name:"Birth of Goethe, 1749",tradition:"German Romanticism",brief:"Poet, scientist, alchemist of the self; Faust took sixty years to complete."}],
+      "09-14":[{id:"dante-death",name:"Death of Dante Alighieri, 1321",tradition:"Christian mystical poetry",brief:"He descended through Hell, climbed Purgatory, stood before the Rose of Paradise."}],
+      "09-16":[{id:"hildegard-birth",name:"Birth of Hildegard of Bingen, 1098",tradition:"Christian mysticism",brief:"Visionary abbess; her theology of viriditas — the greenness of God — remains among the most original mystical concepts of the West."}],
+      "09-17":[{id:"hildegard-death",name:"Death of Hildegard of Bingen, 1179",tradition:"Christian mysticism",brief:"She left behind her visions, music, medicine, and a luminous theology of the living light."}],
+      "09-22":[{id:"autumn-equinox",name:"Autumn Equinox / Mabon",tradition:"Celtic / Norse / Universal",brief:"The second balance; the descent begins; the world tips toward the dark half of the year."}],
+      "09-30":[{id:"rumi-birth",name:"Birth of Rumi, 1207",tradition:"Sufi mysticism",brief:"Born in Balkh; transformed by Shams of Tabriz; the Masnavi called the Persian Quran."}],
+      "10-03":[{id:"francis-death",name:"Death of Francis of Assisi, 1226",tradition:"Christian mysticism",brief:"Il Poverello; received the stigmata on La Verna; preached to birds; stripped of everything."}],
+      "10-15":[{id:"teresa-avila-death",name:"Feast of Teresa of Ávila, 1582",tradition:"Christian mysticism",brief:"She died saying 'I die a daughter of the Church'; Doctor of the Church and Doctor of Prayer."}],
+      "10-19":[{id:"ficino-birth",name:"Birth of Marsilio Ficino, 1433",tradition:"Renaissance Hermeticism",brief:"Translator of Plato and the Corpus Hermeticum; coined 'Platonic love.'"}],
+      "10-31":[{id:"samhain",name:"Samhain",tradition:"Celtic",brief:"The year's dark hinge; the veil dissolves; bonfires on every hill; the Celtic new year begins in darkness."}],
+      "11-01":[{id:"all-saints",name:"All Saints / Samhain",tradition:"Christian mystical / Celtic",brief:"Feast of all the holy ones; the Christian transformation of the Celtic festival of the beloved dead."}],
+      "11-02":[{id:"all-souls",name:"All Souls",tradition:"Christian mystical",brief:"The faithful departed; prayers for the dead and the holy souls in purgatory."}],
+      "11-28":[{id:"blake-birth",name:"Birth of William Blake, 1757",tradition:"English mystical poetry",brief:"Born in London; saw angels in a tree at Peckham Rye; the most visionary poet in the English language."}],
+      "12-04":[{id:"rilke-birth",name:"Birth of Rainer Maria Rilke, 1875",tradition:"German mystical poetry",brief:"Poet of the Angel and the Abyss; the Duino Elegies arrived like a voice from the wind."}],
+      "12-10":[{id:"dickinson-birth",name:"Birth of Emily Dickinson, 1830",tradition:"American mystical poetry",brief:"Born in Amherst; rarely left her house but traveled everywhere; 1800 poems found in fascicles."}],
+      "12-14":[{id:"john-cross-death",name:"Death of John of the Cross, 1591",tradition:"Christian mysticism",brief:"He died asking for the Song of Songs to be read to him; the Dark Night as purification for union."}],
+      "12-17":[{id:"saturnalia",name:"Saturnalia begins",tradition:"Roman",brief:"Seven days of gift-giving and social reversal; slaves dine with masters; the world turns upside down."},{id:"rumi-shab",name:"Shab-e-Arus — Death of Rumi, 1273",tradition:"Sufi mysticism",brief:"Rumi called his death his Wedding Night; union with the Beloved complete."}],
+      "12-21":[{id:"yule",name:"Winter Solstice / Yule",tradition:"Celtic / Norse / Universal",brief:"The longest night; the sun reborn from its own darkness; the cosmic wheel turns."}],
+      "12-25":[{id:"sol-invictus",name:"Sol Invictus / Christmas",tradition:"Roman / Christian mystical",brief:"Birth of the Unconquered Sun and the Light of the World; two solar myths at the year's darkest pivot."}],
+      "12-29":[{id:"rilke-death",name:"Death of Rainer Maria Rilke, 1926",tradition:"German mystical poetry",brief:"Possibly from a rose thorn; he refused pain relief to experience dying fully; his last weeks were poems."}],
+    };
+
+    // ── HELPERS ────────────────────────────────────────────────────
+    function getMoonPhase(date) {
+      const known = new Date(2000, 0, 6, 18, 14, 0);
+      const phase = ((((date - known) / 86400000) % 29.530588853) + 29.530588853) % 29.530588853;
+      if (phase < 1.85) return { name:"New Moon", symbol:"🌑", note:"A threshold. The dark before the spark." };
+      if (phase < 5.54) return { name:"Waxing Crescent", symbol:"🌒", note:"Something is gathering. Tend the intention." };
+      if (phase < 9.22) return { name:"First Quarter", symbol:"🌓", note:"Decision point. What needs doing?" };
+      if (phase < 12.91) return { name:"Waxing Gibbous", symbol:"🌔", note:"Refinement. Almost there." };
+      if (phase < 16.61) return { name:"Full Moon", symbol:"🌕", note:"Fullness and revelation. Illuminate." };
+      if (phase < 20.30) return { name:"Waning Gibbous", symbol:"🌖", note:"Release begins. What served its purpose?" };
+      if (phase < 23.99) return { name:"Last Quarter", symbol:"🌗", note:"Let go. Clear the ground." };
+      return { name:"Waning Crescent", symbol:"🌘", note:"Rest. The world is asking for less." };
+    }
+
+    function getDailyCardIdx(date) {
+      return (date.getFullYear()*10000+(date.getMonth()+1)*100+date.getDate())%22;
+    }
+
+    function formatDuration(ms) {
+      if(ms<=0) return "00:00:00";
+      const s=Math.floor(ms/1000);
+      return `${String(Math.floor(s/3600)).padStart(2,"0")}:${String(Math.floor((s%3600)/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+    }
+
+    function dateKey(date) {
+      return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+    }
+
+    function calKey(date) {
+      return `${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
+    }
+
+    function parseTimeToDate(timeStr, baseDate) {
+      const [h,m]=timeStr.split(":").map(Number);
+      const d=new Date(baseDate); d.setHours(h,m,0,0); return d;
+    }
+
+    function addDays(date,n) { const d=new Date(date); d.setDate(d.getDate()+n); return d; }
+    function isSameDay(a,b) { return dateKey(a)===dateKey(b); }
+
+    function getSeasonNote(date) {
+      const m=date.getMonth(), d=date.getDate();
+      if((m===2&&d>=20)||(m===3&&d<20)) return "Aries season — the ram charges through the vernal gate.";
+      if((m===3&&d>=20)||(m===4&&d<21)) return "Taurus season — the senses deepen; the earth asks to be touched.";
+      if((m===4&&d>=21)||(m===5&&d<21)) return "Gemini season — the mind quickens; connections multiply.";
+      if((m===5&&d>=21)||(m===6&&d<23)) return "Cancer season — the waters rise; the threshold between worlds thins.";
+      if((m===6&&d>=23)||(m===7&&d<23)) return "Leo season — the sun at its most sovereign; the creative fire burns bright.";
+      if((m===7&&d>=23)||(m===8&&d<23)) return "Virgo season — the harvest of discernment; the sacred in the particular.";
+      if((m===8&&d>=23)||(m===9&&d<23)) return "Libra season — the balance is sought; beauty as a form of justice.";
+      if((m===9&&d>=23)||(m===10&&d<22)) return "Scorpio season — descent into the depths; the threshold widens.";
+      if((m===10&&d>=22)||(m===11&&d<22)) return "Sagittarius season — the archer aims at the horizon.";
+      if((m===11&&d>=22)||(m===0&&d<20)) return "Capricorn season — the mountain; the long patient work of ascent.";
+      if((m===0&&d>=20)||(m===1&&d<19)) return "Aquarius season — the water-bearer pours; vision before its time.";
+      return "Pisces season — the veil between worlds; the mystic's own season.";
+    }
+
+    // ── STORAGE ────────────────────────────────────────────────────
+    const DEFAULT_DAY = { fastStart:"22:45", fastHours:16, water:0, weight:"", foodLog:[], oracleText:null };
+
+    async function loadDay(date) {
+      try {
+        const raw = localStorage.getItem(`temenos:day:${dateKey(date)}`);
+        if (raw) return {...DEFAULT_DAY,...JSON.parse(raw)};
+      } catch {}
+      return {...DEFAULT_DAY};
+    }
+
+    function saveDay(date, data) {
+      try { localStorage.setItem(`temenos:day:${dateKey(date)}`, JSON.stringify(data)); } catch {}
+    }
+
+    // ── NOTIFICATION HELPERS ───────────────────────────────────────
+    function scheduleFastNotifications(fastStart, fastHours, cardName, moonName) {
+      const today = new Date(); today.setHours(0,0,0,0);
+      const start = parseTimeToDate(fastStart, today);
+      if (start < new Date()) start.setDate(start.getDate() + 1);
+      const end = new Date(start.getTime() + fastHours * 3600000);
+
+      window.swMessage({ type:'SCHEDULE_FAST_END', payload:{ endTime: end.getTime(), cardName, moonName }});
+      window.swMessage({ type:'SCHEDULE_FAST_START', payload:{ startTime: start.getTime(), cardName, moonName }});
+    }
+
+    // ── APP ────────────────────────────────────────────────────────
+    function App() {
+      const todayStamp = useRef((() => { const d=new Date(); d.setHours(0,0,0,0); return d; })());
+      const [viewDate,setViewDate] = useState(todayStamp.current);
+      const [now,setNow] = useState(new Date());
+      const [tab,setTab] = useState("fast");
+      const [dayData,setDayData] = useState(null);
+      const [foodNote,setFoodNote] = useState("");
+      const [expandedId,setExpandedId] = useState(null);
+      const [expansions,setExpansions] = useState({});
+      const [expansionLoading,setExpansionLoading] = useState(null);
+      const [oracleLoading,setOracleLoading] = useState(false);
+      const [notifGranted,setNotifGranted] = useState(false);
+      const [showNotifBanner,setShowNotifBanner] = useState(false);
+
+      useEffect(()=>{
+        const t=setInterval(()=>setNow(new Date()),1000);
+        // Check notification permission
+        if('Notification' in window) {
+          setNotifGranted(Notification.permission === 'granted');
+          setShowNotifBanner(Notification.permission === 'default');
+        }
+        return ()=>clearInterval(t);
+      },[]);
+
+      useEffect(()=>{
+        setDayData(null); setFoodNote(""); setExpandedId(null);
+        loadDay(viewDate).then(setDayData);
+      },[viewDate]);
+
+      const saveTimer=useRef(null);
+      useEffect(()=>{
+        if(!dayData) return;
+        clearTimeout(saveTimer.current);
+        saveTimer.current=setTimeout(()=>saveDay(viewDate,dayData),900);
+        return ()=>clearTimeout(saveTimer.current);
+      },[dayData,viewDate]);
+
+      const updateDay=useCallback((u)=>setDayData(p=>p?{...p,...u}:p),[]);
+
+      const isToday=isSameDay(viewDate,todayStamp.current);
+      const moon=getMoonPhase(viewDate);
+      const cardIdx=getDailyCardIdx(viewDate);
+      const calEntries=SACRED_CALENDAR[calKey(viewDate)]||[];
+
+      let fw=null;
+      if(dayData){
+        const s=parseTimeToDate(dayData.fastStart,viewDate);
+        if(s>(isToday?now:viewDate)) s.setDate(s.getDate()-1);
+        const e=new Date(s.getTime()+dayData.fastHours*3600000);
+        const inW=isToday&&now>=s&&now<=e;
+        const elapsed=(isToday?now:e)-s;
+        const total=dayData.fastHours*3600000;
+        fw={start:s,end:e,inWindow:inW,remaining:e-(isToday?now:e),progress:Math.min(1,Math.max(0,elapsed/total))};
+      }
+
+      // Schedule notifications when fast window changes
+      useEffect(()=>{
+        if(dayData&&notifGranted&&isToday){
+          scheduleFastNotifications(dayData.fastStart,dayData.fastHours,CARD_NAMES[cardIdx],moon.name);
+        }
+      },[dayData?.fastStart,dayData?.fastHours,notifGranted,isToday]);
+
+      const requestNotifs = async () => {
+        const granted = await window.requestNotifications();
+        setNotifGranted(granted);
+        setShowNotifBanner(false);
+        if(granted&&dayData){
+          scheduleFastNotifications(dayData.fastStart,dayData.fastHours,CARD_NAMES[cardIdx],moon.name);
+        }
+      };
+
+      const generateOracle=useCallback(async(force=false)=>{
+        if(!dayData) return;
+        if(dayData.oracleText&&!force) return;
+        setOracleLoading(true);
+        try{
+          const cardName=CARD_NAMES[cardIdx], cardKeywords=CARD_KEYWORDS[cardIdx];
+          const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:`You are an oracular voice: spare, poetic, liminal. You speak in the tradition of received text and Symbolist poetry. Your oracle readings are 3-5 sentences, evocative, speaking to the threshold between the personal and the cosmic. Write as if for a poet and mystic who works in the tradition of contemplative practice and has twenty years of tarot experience. Avoid generic wellness language.`,messages:[{role:"user",content:`Card: ${cardName} (${cardKeywords}). Moon: ${moon.name}. Date: ${viewDate.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}. Give a brief oracle reading for this day.`}]})});
+          const data=await resp.json();
+          updateDay({oracleText:data.content?.find(b=>b.type==="text")?.text||"The oracle is silent today."});
+        } catch { updateDay({oracleText:"The veil is thick today. Return again."}); }
+        setOracleLoading(false);
+      },[dayData,cardIdx,moon.name,viewDate,updateDay]);
+
+      useEffect(()=>{
+        if(tab==="oracle"&&dayData&&!dayData.oracleText&&!oracleLoading) generateOracle();
+      },[tab,dayData,oracleLoading,generateOracle]);
+
+      const expandEntry=useCallback(async(entry)=>{
+        if(expandedId===entry.id){setExpandedId(null);return;}
+        setExpandedId(entry.id);
+        if(expansions[entry.id]||expansionLoading===entry.id) return;
+        setExpansionLoading(entry.id);
+        try{
+          const resp=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1000,system:`You are a scholar and poet of the sacred traditions. Your amplifications are historically grounded, poetically alive, resonant with depth psychology. Write for a poet and mystic with twenty years of divinatory practice. 4-6 sentences. No bullet points. The precision of scholarship and the breath of poetry.`,messages:[{role:"user",content:`Amplify this sacred calendar entry for ${viewDate.toLocaleDateString("en-US",{month:"long",day:"numeric"})}:\n\n${entry.name} (${entry.tradition}): ${entry.brief}\n\nGive a rich contemplative amplification — historical depth, symbolic resonance, why this day matters to a contemplative practice.`}]})});
+          const data=await resp.json();
+          setExpansions(p=>({...p,[entry.id]:data.content?.find(b=>b.type==="text")?.text||""}));
+        } catch { setExpansions(p=>({...p,[entry.id]:"The oracle is momentarily silent."})); }
+        setExpansionLoading(null);
+      },[expandedId,expansions,expansionLoading,viewDate]);
+
+      const circ=2*Math.PI*54;
+
+      return (
+        React.createElement('div', {style:{minHeight:"100vh",background:"#0d0d1a",fontFamily:"'Cormorant Garamond','Georgia',serif",color:"#e8e0cc",display:"flex",flexDirection:"column",alignItems:"center",padding:"0 0 80px",position:"relative",overflow:"hidden"}},
+
+          // Stars
+          ...[...Array(30)].map((_,i)=>
+            React.createElement('div',{key:i,className:"star",style:{width:i%5===0?2:1,height:i%5===0?2:1,top:`${(i*37+11)%100}%`,left:`${(i*61+7)%100}%`,"--o":0.07+(i%5)*0.07,"--d":`${2+(i%4)}s`,animationDelay:`${i*0.28}s`}})
+          ),
+
+          // Notification banner
+          showNotifBanner && React.createElement('div',{style:{width:"100%",maxWidth:400,background:"rgba(201,185,122,.08)",border:"1px solid rgba(201,185,122,.2)",borderRadius:6,padding:"12px 16px",margin:"8px 22px 0",display:"flex",justifyContent:"space-between",alignItems:"center",position:"relative",zIndex:10}},
+            React.createElement('span',{style:{fontSize:12,color:"#a09060",fontStyle:"italic"}},"Enable notifications for fasting reminders"),
+            React.createElement('div',{style:{display:"flex",gap:8}},
+              React.createElement('button',{className:"abtn",style:{fontSize:10,padding:"4px 10px"},onClick:requestNotifs},"Allow"),
+              React.createElement('button',{style:{background:"none",border:"none",color:"#4a4438",cursor:"pointer",fontSize:16},onClick:()=>setShowNotifBanner(false)},"×")
+            )
+          ),
+
+          // Header
+          React.createElement('div',{style:{textAlign:"center",padding:"20px 0 6px",position:"relative",zIndex:1,width:"100%",maxWidth:400}},
+            React.createElement('div',{style:{fontSize:10,letterSpacing:".38em",color:"#5a5448",textTransform:"uppercase",marginBottom:6}},"Temenos"),
+            React.createElement('div',{style:{display:"flex",alignItems:"center",justifyContent:"center",gap:2}},
+              React.createElement('button',{className:"nb",onClick:()=>setViewDate(d=>addDays(d,-1))},"‹"),
+              React.createElement('div',{style:{minWidth:210,textAlign:"center"}},
+                React.createElement('div',{style:{fontSize:13,letterSpacing:".08em",color:isToday?"#c9b97a":"#8a8070"}},
+                  viewDate.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})
+                ),
+                !isToday&&React.createElement('div',{style:{fontSize:10,color:"#4a4438",letterSpacing:".12em"}},viewDate.getFullYear())
+              ),
+              React.createElement('button',{className:"nb",disabled:isToday,onClick:()=>setViewDate(d=>addDays(d,1))},"›")
+            ),
+            !isToday&&React.createElement('div',{style:{textAlign:"center",marginTop:5}},
+              React.createElement('button',{onClick:()=>setViewDate(todayStamp.current),style:{background:"none",border:"1px solid rgba(201,185,122,.18)",color:"#c9b97a",fontFamily:"inherit",fontSize:9,letterSpacing:".2em",textTransform:"uppercase",padding:"3px 12px",borderRadius:2,cursor:"pointer"}},"Return to Today")
+            )
+          ),
+
+          // Content
+          React.createElement('div',{style:{width:"100%",maxWidth:400,padding:"0 22px",position:"relative",zIndex:1,flex:1}},
+
+            // FAST TAB
+            tab==="fast"&&dayData&&React.createElement('div',{className:"fi2"},
+              React.createElement('div',{style:{display:"flex",justifyContent:"center",margin:"18px 0 14px"}},
+                React.createElement('svg',{width:"140",height:"140",className:"glow"},
+                  React.createElement('circle',{cx:"70",cy:"70",r:"54",fill:"none",stroke:"rgba(201,185,122,.07)",strokeWidth:"3"}),
+                  React.createElement('circle',{cx:"70",cy:"70",r:"54",fill:"none",stroke:fw?.inWindow?"#c9b97a":"#3a342c",strokeWidth:"3",strokeDasharray:circ,strokeDashoffset:circ*(1-(fw?.progress||0)),strokeLinecap:"round",style:{transform:"rotate(-90deg)",transformOrigin:"70px 70px",transition:"stroke-dashoffset 1s linear"}}),
+                  React.createElement('text',{x:"70",y:"60",textAnchor:"middle",fill:"#7a7060",fontSize:"10",fontFamily:"Cormorant Garamond",letterSpacing:"2"},fw?.inWindow?"FASTING":isToday?"EATING":"WINDOW"),
+                  React.createElement('text',{x:"70",y:"80",textAnchor:"middle",fill:"#c9b97a",fontSize:"17",fontFamily:"Cormorant Garamond",fontWeight:"300"},isToday?(fw?.inWindow?formatDuration(fw.remaining):"open"):`${dayData.fastHours}h`),
+                  React.createElement('text',{x:"70",y:"96",textAnchor:"middle",fill:"#4a4438",fontSize:"9",fontFamily:"Cormorant Garamond",letterSpacing:"1"},isToday&&fw?.inWindow?"remaining":"")
+                )
+              ),
+              React.createElement('div',{style:{textAlign:"center",color:"#5a5448",fontSize:13,letterSpacing:".05em",marginBottom:18}},
+                fw&&`${fw.start.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})} → ${fw.end.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}`
+              ),
+              React.createElement('div',{style:{background:"rgba(255,255,255,.03)",border:"1px solid rgba(201,185,122,.09)",borderRadius:6,padding:"16px",marginBottom:12}},
+                React.createElement('div',{style:{fontSize:10,letterSpacing:".22em",color:"#4a4438",textTransform:"uppercase",marginBottom:14,textAlign:"center"}},"Adjust Window"),
+                React.createElement('div',{style:{display:"flex",justifyContent:"space-around",alignItems:"center"}},
+                  React.createElement('div',{style:{textAlign:"center"}},
+                    React.createElement('div',{style:{fontSize:10,color:"#4a4438",letterSpacing:".12em",marginBottom:6,textTransform:"uppercase"}},"Start"),
+                    React.createElement('input',{type:"time",value:dayData.fastStart,onChange:e=>updateDay({fastStart:e.target.value}),className:"ti"})
+                  ),
+                  React.createElement('div',{style:{textAlign:"center"}},
+                    React.createElement('div',{style:{fontSize:10,color:"#4a4438",letterSpacing:".12em",marginBottom:6,textTransform:"uppercase"}},"Hours"),
+                    React.createElement('div',{style:{display:"flex",alignItems:"center",gap:10}},
+                      React.createElement('button',{className:"adj",onClick:()=>updateDay({fastHours:Math.max(8,dayData.fastHours-1)})},"−"),
+                      React.createElement('span',{style:{fontSize:22,color:"#c9b97a",minWidth:28,textAlign:"center"}},dayData.fastHours),
+                      React.createElement('button',{className:"adj",onClick:()=>updateDay({fastHours:Math.min(23,dayData.fastHours+1)})},"+")))
+                )
+              ),
+              React.createElement('div',{style:{textAlign:"center",fontSize:11,color:"#3a342c",fontStyle:"italic"}},`${dayData.fastHours}:${24-dayData.fastHours} ratio`),
+              notifGranted&&React.createElement('div',{style:{textAlign:"center",marginTop:14,fontSize:11,color:"#4a4438",fontStyle:"italic"}},
+                "🔔 Notifications on — you'll be reminded at window boundaries"
+              )
+            ),
+
+            // BODY TAB
+            tab==="body"&&dayData&&React.createElement('div',{className:"fi2"},
+              React.createElement('div',{style:{marginBottom:24}},
+                React.createElement('div',{style:{fontSize:10,letterSpacing:".28em",color:"#4a4438",textTransform:"uppercase",marginBottom:14,textAlign:"center"}},"Water"),
+                React.createElement('div',{style:{display:"flex",justifyContent:"center",gap:8,flexWrap:"wrap",marginBottom:8}},
+                  ...[...Array(8)].map((_,i)=>React.createElement('span',{key:i,className:"wd",onClick:()=>updateDay({water:i<dayData.water?i:i+1}),style:{opacity:i<dayData.water?1:0.2}},"💧"))
+                ),
+                React.createElement('div',{style:{textAlign:"center",fontSize:13,color:"#6a6050"}},`${dayData.water} of 8 glasses`),
+                dayData.water>0&&React.createElement('div',{style:{textAlign:"center",marginTop:8}},React.createElement('button',{className:"abtn",style:{fontSize:10,padding:"5px 12px"},onClick:()=>updateDay({water:0})},"Reset"))
+              ),
+              React.createElement('div',{style:{marginBottom:24,textAlign:"center"}},
+                React.createElement('div',{style:{fontSize:10,letterSpacing:".28em",color:"#4a4438",textTransform:"uppercase",marginBottom:14}},"Weight"),
+                React.createElement('div',{style:{display:"flex",alignItems:"baseline",justifyContent:"center",gap:8}},
+                  React.createElement('input',{type:"number",className:"wi",placeholder:"—",value:dayData.weight,onChange:e=>updateDay({weight:e.target.value})}),
+                  React.createElement('span',{style:{fontSize:14,color:"#4a4438"}},"lbs")
+                )
+              ),
+              React.createElement('div',null,
+                React.createElement('div',{style:{fontSize:10,letterSpacing:".28em",color:"#4a4438",textTransform:"uppercase",marginBottom:14,textAlign:"center"}},"Meals & Notes"),
+                React.createElement('div',{style:{display:"flex",gap:8,marginBottom:10}},
+                  React.createElement('input',{className:"fi",placeholder:"note a meal, food, or feeling…",value:foodNote,onChange:e=>setFoodNote(e.target.value),
+                    onKeyDown:e=>{if(e.key==="Enter"&&foodNote.trim()){updateDay({foodLog:[...dayData.foodLog,{text:foodNote.trim(),time:new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}]});setFoodNote("");}}}),
+                  React.createElement('button',{className:"abtn",style:{whiteSpace:"nowrap",fontSize:10},
+                    onClick:()=>{if(foodNote.trim()){updateDay({foodLog:[...dayData.foodLog,{text:foodNote.trim(),time:new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}]});setFoodNote("");}}},"+")),
+                ...dayData.foodLog.map((e,i)=>React.createElement('div',{key:i,style:{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"8px 0",borderBottom:"1px solid rgba(201,185,122,.07)",fontSize:13}},
+                  React.createElement('span',{style:{color:"#d4c9a8",fontStyle:"italic"}},e.text),
+                  React.createElement('span',{style:{color:"#3a342c",fontSize:11,marginLeft:12,whiteSpace:"nowrap"}},e.time)
+                )),
+                dayData.foodLog.length===0&&React.createElement('div',{style:{textAlign:"center",color:"#3a342c",fontSize:12,fontStyle:"italic",marginTop:8}},"nothing logged yet")
+              )
+            ),
+
+            // SKY TAB
+            tab==="sky"&&React.createElement('div',{className:"fi2",style:{textAlign:"center"}},
+              React.createElement('div',{style:{fontSize:62,margin:"26px 0 10px",filter:"drop-shadow(0 0 18px rgba(201,185,122,.4))"}},moon.symbol),
+              React.createElement('div',{style:{fontSize:21,color:"#c9b97a",fontWeight:300,letterSpacing:".05em",marginBottom:8}},moon.name),
+              React.createElement('div',{style:{fontSize:14,color:"#9a8e78",fontStyle:"italic",marginBottom:26,lineHeight:1.75}},moon.note),
+              React.createElement('div',{style:{border:"1px solid rgba(201,185,122,.1)",borderRadius:6,padding:"16px",marginBottom:16}},
+                React.createElement('div',{style:{fontSize:10,letterSpacing:".22em",color:"#4a4438",textTransform:"uppercase",marginBottom:10,textAlign:"center"}},"Sky Notes"),
+                React.createElement('div',{style:{fontSize:13,color:"#8a8070",fontStyle:"italic",lineHeight:1.85,textAlign:"center"}},getSeasonNote(viewDate))
+              ),
+              React.createElement('div',{style:{fontSize:10,color:"#3a342c",letterSpacing:".12em",fontStyle:"italic"}},viewDate.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}))
+            ),
+
+            // ORACLE TAB
+            tab==="oracle"&&dayData&&React.createElement('div',{className:"fi2",style:{textAlign:"center"}},
+              React.createElement('div',{style:{marginTop:18,marginBottom:6}},
+                React.createElement('div',{style:{fontSize:10,letterSpacing:".28em",color:"#4a4438",textTransform:"uppercase",marginBottom:6}},"Today's Card"),
+                React.createElement('div',{style:{fontSize:26,color:"#c9b97a",fontWeight:300,letterSpacing:".05em",marginBottom:4}},CARD_NAMES[cardIdx]),
+                React.createElement('div',{style:{fontSize:12,color:"#4a4438",fontStyle:"italic",marginBottom:22}},CARD_KEYWORDS[cardIdx])
+              ),
+              React.createElement('div',{style:{border:"1px solid rgba(201,185,122,.13)",borderRadius:6,padding:"22px 18px",marginBottom:18,minHeight:108,display:"flex",alignItems:"center",justifyContent:"center"}},
+                oracleLoading?React.createElement('div',{style:{color:"#3a342c",fontStyle:"italic",fontSize:13,letterSpacing:".08em"}},"the oracle is listening…"):
+                  dayData.oracleText?React.createElement('div',{className:"ot"},dayData.oracleText):null
+              ),
+              React.createElement('button',{className:"abtn",disabled:oracleLoading,onClick:()=>{updateDay({oracleText:null});setTimeout(()=>generateOracle(true),80);}},"Draw Again"),
+              React.createElement('div',{style:{marginTop:24,display:"flex",alignItems:"center",justifyContent:"center",gap:10}},
+                React.createElement('span',{style:{fontSize:18}},moon.symbol),
+                React.createElement('span',{style:{fontSize:12,color:"#4a4438",fontStyle:"italic"}},moon.name)
+              )
+            ),
+
+            // TEMENOS TAB
+            tab==="temenos"&&React.createElement('div',{className:"fi2"},
+              React.createElement('div',{style:{textAlign:"center",marginTop:16,marginBottom:18}},
+                React.createElement('div',{style:{fontSize:10,letterSpacing:".35em",color:"#4a4438",textTransform:"uppercase",marginBottom:4}},"Temenos"),
+                React.createElement('div',{style:{fontSize:12,color:"#3a342c",fontStyle:"italic"}},viewDate.toLocaleDateString("en-US",{month:"long",day:"numeric"}))
+              ),
+              ...(calEntries.length>0?calEntries.map(entry=>
+                React.createElement('div',{key:entry.id,className:`ce ${expandedId===entry.id?"open":""}`,onClick:()=>expandEntry(entry)},
+                  React.createElement('div',{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}},
+                    React.createElement('div',{style:{flex:1}},
+                      React.createElement('div',{style:{fontSize:15,color:"#d4c9a8",fontWeight:400,marginBottom:3}},entry.name),
+                      React.createElement('div',{style:{fontSize:10,color:"#5a5448",letterSpacing:".14em",textTransform:"uppercase"}},entry.tradition)
+                    ),
+                    React.createElement('div',{style:{color:"#3a342c",fontSize:14,marginLeft:12,marginTop:2,transition:"transform .3s",transform:expandedId===entry.id?"rotate(180deg)":"none"}},"⌄")
+                  ),
+                  React.createElement('div',{style:{fontSize:13,color:"#7a7060",fontStyle:"italic",lineHeight:1.78,marginTop:8}},entry.brief),
+                  expandedId===entry.id&&React.createElement('div',{className:"et"},
+                    expansionLoading===entry.id?React.createElement('span',{style:{color:"#3a342c",letterSpacing:".08em"}},"opening the record…"):
+                      expansions[entry.id]||null
+                  )
+                )
+              ):[
+                React.createElement('div',{key:"empty",style:{border:"1px solid rgba(201,185,122,.07)",borderRadius:5,padding:"18px 16px",textAlign:"center"}},
+                  React.createElement('div',{style:{fontSize:13,color:"#4a4438",fontStyle:"italic",lineHeight:1.85}},"No entry in the sacred calendar for this date.",React.createElement('br'),"The silence is also a kind of record.")
+                )
+              ]),
+              React.createElement('div',{style:{marginTop:20,border:"1px solid rgba(201,185,122,.07)",borderRadius:5,padding:"14px",textAlign:"center"}},
+                React.createElement('div',{style:{fontSize:10,letterSpacing:".22em",color:"#3a342c",textTransform:"uppercase",marginBottom:8}},"The Season"),
+                React.createElement('div',{style:{fontSize:13,color:"#6a6050",fontStyle:"italic",lineHeight:1.82}},getSeasonNote(viewDate)),
+                React.createElement('div',{style:{marginTop:10,fontSize:14}},moon.symbol," ",React.createElement('span',{style:{fontSize:11,color:"#3a342c"}},moon.name))
+              )
+            ),
+
+            !dayData&&React.createElement('div',{style:{textAlign:"center",color:"#2a2420",fontStyle:"italic",fontSize:13,marginTop:40}},"loading…")
+          ),
+
+          // Tab Bar
+          React.createElement('div',{style:{position:"fixed",bottom:0,left:0,right:0,background:"rgba(9,9,18,.97)",backdropFilter:"blur(14px)",borderTop:"1px solid rgba(201,185,122,.07)",display:"flex",justifyContent:"space-around",padding:"8px 0 12px",zIndex:100}},
+            ...[{id:"fast",label:"Fast",g:"◎"},{id:"body",label:"Body",g:"◇"},{id:"sky",label:"Sky",g:"☽"},{id:"oracle",label:"Oracle",g:"✦"},{id:"temenos",label:"Temenos",g:"⊕"}].map(t=>
+              React.createElement('button',{key:t.id,className:`tb ${tab===t.id?"active":""}`,onClick:()=>setTab(t.id)},
+                React.createElement('div',{style:{fontSize:15,marginBottom:2}},t.g),t.label
+              )
+            )
+          )
+        )
+      );
+    }
+
+    // ── STYLES ─────────────────────────────────────────────────────
+    const style = document.createElement('style');
+    style.textContent = `
+      .star{position:absolute;border-radius:50%;background:#e8e0cc;animation:twinkle var(--d,3s) ease-in-out infinite}
+      @keyframes twinkle{0%,100%{opacity:var(--o,.3)}50%{opacity:.04}}
+      .tb{background:none;border:none;font-family:'Cormorant Garamond',Georgia,serif;font-size:10px;letter-spacing:.18em;color:#6a6050;cursor:pointer;padding:8px 8px 4px;transition:color .3s;text-transform:uppercase}
+      .tb.active{color:#c9b97a}.tb:hover{color:#a09060}
+      .glow{filter:drop-shadow(0 0 14px rgba(201,185,122,.35))}
+      .adj{background:rgba(201,185,122,.08);border:1px solid rgba(201,185,122,.2);color:#c9b97a;font-family:inherit;font-size:18px;width:34px;height:34px;border-radius:50%;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center}
+      .adj:hover{background:rgba(201,185,122,.2)}
+      .abtn{background:rgba(201,185,122,.08);border:1px solid rgba(201,185,122,.22);color:#c9b97a;font-family:'Cormorant Garamond',Georgia,serif;font-size:11px;letter-spacing:.13em;text-transform:uppercase;padding:9px 18px;border-radius:2px;cursor:pointer;transition:all .3s}
+      .abtn:hover{background:rgba(201,185,122,.18)}.abtn:disabled{opacity:.3;cursor:default}
+      .fi{background:rgba(255,255,255,.04);border:1px solid rgba(201,185,122,.16);color:#e8e0cc;font-family:'Cormorant Garamond',Georgia,serif;font-size:14px;padding:10px 14px;border-radius:4px;width:100%;outline:none}
+      .fi:focus{border-color:rgba(201,185,122,.42)}
+      .wi{background:transparent;border:none;border-bottom:1px solid rgba(201,185,122,.28);color:#e8e0cc;font-family:'Cormorant Garamond',Georgia,serif;font-size:30px;font-weight:300;width:90px;text-align:center;outline:none}
+      .ti{background:transparent;border:none;border-bottom:1px solid rgba(201,185,122,.28);color:#c9b97a;font-family:'Cormorant Garamond',Georgia,serif;font-size:16px;text-align:center;width:72px;outline:none}
+      .ot{font-style:italic;font-size:15px;line-height:1.95;color:#d4c9a8;text-align:center;max-width:300px;margin:0 auto}
+      .wd{cursor:pointer;transition:all .2s;font-size:22px;user-select:none}.wd:hover{transform:scale(1.2)}
+      .ce{border:1px solid rgba(201,185,122,.12);border-radius:5px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:all .3s}
+      .ce:hover{border-color:rgba(201,185,122,.28);background:rgba(201,185,122,.04)}
+      .ce.open{border-color:rgba(201,185,122,.35);background:rgba(201,185,122,.05)}
+      .et{font-style:italic;font-size:13px;line-height:1.85;color:#b0a88e;margin-top:12px;padding-top:12px;border-top:1px solid rgba(201,185,122,.1)}
+      .nb{background:none;border:none;color:#6a6050;cursor:pointer;font-size:20px;padding:3px 10px;transition:color .2s;font-family:inherit;line-height:1}
+      .nb:hover:not(:disabled){color:#c9b97a}.nb:disabled{opacity:.18;cursor:default}
+      @keyframes fi2{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+      .fi2{animation:fi2 .6s ease forwards}
+    `;
+    document.head.appendChild(style);
+
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+  </script>
+</body>
+</html>
